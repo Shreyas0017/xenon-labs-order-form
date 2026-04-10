@@ -30,7 +30,12 @@ const firebaseConfig = {
 export const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app);
 export const auth = getAuth(app);
-export const ADMIN_EMAIL = requiredEnv("VITE_ADMIN_EMAIL").toLowerCase();
+const ADMIN_EMAILS = requiredEnv("VITE_ADMIN_EMAIL")
+  .split(",")
+  .map((value) => value.trim().toLowerCase())
+  .filter(Boolean);
+
+export const ADMIN_EMAIL = ADMIN_EMAILS[0] ?? "";
 
 const googleProvider = new GoogleAuthProvider();
 
@@ -47,8 +52,8 @@ export function getSignedInUser(): User {
 }
 
 export function isAdminEmail(email?: string | null): boolean {
-  if (!email || !ADMIN_EMAIL) return false;
-  return email.toLowerCase() === ADMIN_EMAIL;
+  if (!email || ADMIN_EMAILS.length === 0) return false;
+  return ADMIN_EMAILS.includes(email.trim().toLowerCase());
 }
 
 export async function signOutUser(): Promise<void> {
