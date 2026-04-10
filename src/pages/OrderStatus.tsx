@@ -105,7 +105,10 @@ const OrderStatus = () => {
       const data = doc.data() as DocumentData;
       return {
         id: doc.id,
-        orderNumber: "",
+        orderNumber:
+          typeof data.orderNumber === "string" && data.orderNumber
+            ? data.orderNumber
+            : "",
         total: typeof data.total === "number" ? data.total : Number(data.total ?? 0),
         status: typeof data.status === "string" ? data.status : "placed",
         createdAt: asDate(data.createdAt),
@@ -120,7 +123,9 @@ const OrderStatus = () => {
     });
 
     mapped.forEach((order, index) => {
-      order.orderNumber = formatOrderNumber(index);
+      if (!order.orderNumber) {
+        order.orderNumber = formatOrderNumber(index);
+      }
     });
 
     setOrders(mapped);

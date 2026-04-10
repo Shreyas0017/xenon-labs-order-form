@@ -37,14 +37,23 @@ const Auth = () => {
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown auth error";
-      const lower = message.toLowerCase();
+      const code =
+        typeof error === "object" && error && "code" in error
+          ? String((error as { code?: unknown }).code ?? "")
+          : "";
 
-      if (lower.includes("popup-closed-by-user")) {
+      if (code === "auth/popup-closed-by-user") {
         toast.error("Google sign-in popup was closed before completion.");
-      } else if (lower.includes("operation-not-allowed")) {
+      } else if (code === "auth/popup-blocked") {
+        toast.error("Popup was blocked by the browser. Allow popups and try again.");
+      } else if (code === "auth/unauthorized-domain") {
+        toast.error("This domain is not authorized in Firebase Auth. Add your deployed domain in Firebase Authentication > Settings > Authorized domains.");
+      } else if (code === "auth/invalid-api-key") {
+        toast.error("Invalid Firebase API key in deployment env. Check VITE_FIREBASE_API_KEY.");
+      } else if (code === "auth/operation-not-allowed") {
         toast.error("Google sign-in is disabled. Enable it in Firebase Authentication.");
       } else {
-        toast.error("Google sign-in failed. Please check Firebase settings.");
+        toast.error(`Google sign-in failed (${code || "unknown"}). ${message}`);
       }
     } finally {
       setSigningIn(false);

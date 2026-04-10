@@ -12,8 +12,10 @@ import {
 } from "@/components/ui/select";
 import { products, calculateCustomPrice, type Product } from "@/lib/products";
 import { toast } from "sonner";
-import { addDoc, collection, serverTimestamp } from "firebase/firestore/lite";
+import { collection, doc, serverTimestamp, setDoc } from "firebase/firestore/lite";
 import { db, getSignedInUser } from "@/lib/firebase";
+
+const PAYMENT_FORM_URL = "https://forms.gle/iBrYH3EjpKVn5Xx68";
 
 interface OrderItem {
   product: Product;
@@ -28,6 +30,15 @@ interface OrderFormProps {
   defaultName?: string;
 }
 
+interface PlacedOrderInfo {
+  orderId: string;
+  orderNumber: string;
+}
+
+const createOrderNumber = (id: string): string => {
+  return `ORD-${id.slice(0, 6).toUpperCase()}`;
+};
+
 const OrderForm = ({ onOrderPlaced, defaultName = "" }: OrderFormProps) => {
   const [name, setName] = useState("");
   const [contact, setContact] = useState("");
@@ -38,6 +49,7 @@ const OrderForm = ({ onOrderPlaced, defaultName = "" }: OrderFormProps) => {
   const [customQty, setCustomQty] = useState("");
   const [isCustom, setIsCustom] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [placedOrder, setPlacedOrder] = useState<PlacedOrderInfo | null>(null);
 
   useEffect(() => {
     if (!name && defaultName) {
@@ -130,8 +142,12 @@ const OrderForm = ({ onOrderPlaced, defaultName = "" }: OrderFormProps) => {
         throw new Error("Google account email not available.");
       }
 
-      await addDoc(collection(db, "orders"), {
+      const orderRef = doc(collection(db, "orders"));
+      const orderNumber = createOrderNumber(orderRef.id);
+
+      await setDoc(orderRef, {
         uid: user.uid,
+        orderNumber,
         customer: {
           name,
           contact,
@@ -149,6 +165,11 @@ const OrderForm = ({ onOrderPlaced, defaultName = "" }: OrderFormProps) => {
         })),
         total: grandTotal,
         createdAt: serverTimestamp(),
+      });
+
+      setPlacedOrder({
+        orderId: orderRef.id,
+        orderNumber,
       });
       toast.success("Pre-order placed successfully!");
       resetForm();
@@ -176,6 +197,17 @@ const OrderForm = ({ onOrderPlaced, defaultName = "" }: OrderFormProps) => {
     setContact("");
     setAddress("");
     setOrderItems([]);
+  };
+
+  const handleCopyOrderId = async () => {
+    if (!placedOrder?.orderId) return;
+
+    try {
+      await navigator.clipboard.writeText(placedOrder.orderId);
+      toast.success("Order ID copied");
+    } catch {
+      toast.error("Unable to copy order ID");
+    }
   };
 
   return (
@@ -383,6 +415,38 @@ const OrderForm = ({ onOrderPlaced, defaultName = "" }: OrderFormProps) => {
           >
             {submitting ? "Submitting..." : "⚡ Pre-Order Now"}
           </Button>
+
+          {placedOrder && (
+            <div className="rounded-md border border-primary/40 bg-secondary p-4 space-y-3">
+              <p className="text-xs uppercase tracking-widest text-primary">Payment Process</p>
+              <p className="text-sm text-secondary-foreground">
+                Order Number: <span className="font-semibold">{placedOrder.orderNumber}</span>
+              </p>
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-xs text-muted-foreground break-all">
+                  Order ID: {placedOrder.orderId}
+                </p>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-8 px-3 text-xs"
+                  onClick={handleCopyOrderId}
+                >
+                  Copy Order ID
+                </Button>
+              </div>
+              <a
+                href={PAYMENT_FORM_URL}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-block w-full"
+              >
+                <Button type="button" className="w-full">
+                  Continue To Payment Form
+                </Button>
+              </a>
+            </div>
+          )}
         </div>
 
         <p className="text-center text-xs text-muted-foreground mt-6">

@@ -1,7 +1,16 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { onAuthStateChanged, type User } from "firebase/auth";
-import { collection, getDocs, orderBy, query, type DocumentData } from "firebase/firestore/lite";
+import {
+  collection,
+  doc,
+  getDocs,
+  orderBy,
+  query,
+  serverTimestamp,
+  type DocumentData,
+  updateDoc,
+} from "firebase/firestore/lite";
 import { Button } from "@/components/ui/button";
 import { auth, db, isAdminEmail, signOutUser } from "@/lib/firebase";
 import { toast } from "sonner";
@@ -110,6 +119,7 @@ const Admin = () => {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string>("");
   const [expandedOrderId, setExpandedOrderId] = useState<string | null>(null);
+  const [updatingOrderId, setUpdatingOrderId] = useState<string | null>(null);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
@@ -144,7 +154,10 @@ const Admin = () => {
 
           return {
             id: doc.id,
-            orderNumber: formatOrderNumber(index),
+            orderNumber:
+              typeof data.orderNumber === "string" && data.orderNumber
+                ? data.orderNumber
+                : formatOrderNumber(index),
             customerName: typeof customer.name === "string" ? customer.name : "",
             customerContact: typeof customer.contact === "string" ? customer.contact : "",
             customerEmail: typeof customer.email === "string" ? customer.email : "",
@@ -183,6 +196,32 @@ const Admin = () => {
   const handleSignOut = async () => {
     await signOutUser();
     navigate("/auth", { replace: true });
+  };
+
+  const handleMarkCompleted = async (orderId: string) => {
+    setUpdatingOrderId(orderId);
+    try {
+      await updateDoc(doc(db, "orders", orderId), {
+        status: "completed",
+        completedAt: serverTimestamp(),
+      });
+
+      setOrders((prev) =>
+        prev.map((order) =>
+          order.id === orderId
+            ? {
+                ...order,
+                status: "completed",
+              }
+            : order
+        )
+      );
+      toast.success("Order marked as completed");
+    } catch {
+      toast.error("Failed to update order status");
+    } finally {
+      setUpdatingOrderId(null);
+    }
   };
 
   return (
@@ -240,16 +279,28 @@ const Admin = () => {
                   </div>
 
                   <div className="flex justify-end">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      className="h-8 px-3 text-xs"
-                      onClick={() =>
-                        setExpandedOrderId((prev) => (prev === order.id ? null : order.id))
-                      }
-                    >
-                      {expandedOrderId === order.id ? "Hide Items" : "View Items"}
-                    </Button>
+                    <div className="flex gap-2">
+                      {order.status !== "completed" && (
+                        <Button
+                          type="button"
+                          className="h-8 px-3 text-xs"
+                          disabled={updatingOrderId === order.id}
+                          onClick={() => void handleMarkCompleted(order.id)}
+                        >
+                          {updatingOrderId === order.id ? "Updating..." : "Mark Completed"}
+                        </Button>
+                      )}
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="h-8 px-3 text-xs"
+                        onClick={() =>
+                          setExpandedOrderId((prev) => (prev === order.id ? null : order.id))
+                        }
+                      >
+                        {expandedOrderId === order.id ? "Hide Items" : "View Items"}
+                      </Button>
+                    </div>
                   </div>
 
                   {expandedOrderId === order.id && (
