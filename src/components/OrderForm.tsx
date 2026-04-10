@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import {
@@ -12,8 +12,8 @@ import {
 } from "@/components/ui/select";
 import { products, calculateCustomPrice, type Product } from "@/lib/products";
 import { toast } from "sonner";
-
-const GOOGLE_SHEET_URL = ""; // User will set this
+import { addDoc, collection, serverTimestamp } from "firebase/firestore/lite";
+import { db, getSignedInUser } from "@/lib/firebase";
 
 interface OrderItem {
   product: Product;
@@ -23,10 +23,14 @@ interface OrderItem {
   total: number;
 }
 
-const OrderForm = () => {
+interface OrderFormProps {
+  onOrderPlaced?: () => void;
+  defaultName?: string;
+}
+
+const OrderForm = ({ onOrderPlaced, defaultName = "" }: OrderFormProps) => {
   const [name, setName] = useState("");
   const [contact, setContact] = useState("");
-  const [email, setEmail] = useState("");
   const [address, setAddress] = useState("");
   const [orderItems, setOrderItems] = useState<OrderItem[]>([]);
   const [selectedProduct, setSelectedProduct] = useState("");
@@ -34,6 +38,12 @@ const OrderForm = () => {
   const [customQty, setCustomQty] = useState("");
   const [isCustom, setIsCustom] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (!name && defaultName) {
+      setName(defaultName);
+    }
+  }, [defaultName, name]);
 
   const currentProduct = useMemo(
     () => products.find((p) => p.id === selectedProduct),
@@ -102,7 +112,7 @@ const OrderForm = () => {
   };
 
   const handleSubmit = async () => {
-    if (!name || !contact || !email || !address) {
+    if (!name || !contact || !address) {
       toast.error("Please fill all fields");
       return;
     }
@@ -111,52 +121,59 @@ const OrderForm = () => {
       return;
     }
 
-    const itemsSummary = orderItems
-      .map(
-        (item) =>
-          `${item.product.name} (${item.selectionType === "custom" ? `${item.customQty} pcs custom` : item.presetKey}) - ₹${item.total}`
-      )
-      .join(" | ");
-
-    const payload = {
-      name,
-      contact,
-      email,
-      address,
-      products: itemsSummary,
-      total: grandTotal,
-      date: new Date().toLocaleString(),
-    };
-
-    if (!GOOGLE_SHEET_URL) {
-      toast.info("Google Sheet URL not configured. Order details logged to console.");
-      console.log("Order payload:", payload);
-      toast.success("Pre-order placed successfully!");
-      resetForm();
-      return;
-    }
-
     setSubmitting(true);
     try {
-      await fetch(GOOGLE_SHEET_URL, {
-        method: "POST",
-        mode: "no-cors",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
+      const user = getSignedInUser();
+      const email = user.email ?? "";
+
+      if (!email) {
+        throw new Error("Google account email not available.");
+      }
+
+      await addDoc(collection(db, "orders"), {
+        uid: user.uid,
+        customer: {
+          name,
+          contact,
+          email,
+          address,
+        },
+        status: "placed",
+        items: orderItems.map((item) => ({
+          productId: item.product.id,
+          productName: item.product.name,
+          selectionType: item.selectionType,
+          presetKey: item.presetKey ?? null,
+          customQty: item.customQty ?? null,
+          total: item.total,
+        })),
+        total: grandTotal,
+        createdAt: serverTimestamp(),
       });
       toast.success("Pre-order placed successfully!");
       resetForm();
-    } catch {
-      toast.error("Failed to submit. Please try again.");
+      onOrderPlaced?.();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown error";
+      const lowerMessage = message.toLowerCase();
+
+      if (lowerMessage.includes("not signed in")) {
+        toast.error("Please sign in with Google before submitting.");
+      } else if (lowerMessage.includes("permission-denied")) {
+        toast.error("Firestore denied write access. Update Firestore rules to allow authenticated users.");
+      } else if (lowerMessage.includes("google account email not available")) {
+        toast.error("Could not read your Google email. Please retry sign-in.");
+      } else {
+        toast.error("Failed to submit. Please try again.");
+      }
     } finally {
       setSubmitting(false);
     }
   };
 
   const resetForm = () => {
-    setName("");
+    setName(defaultName || "");
     setContact("");
-    setEmail("");
     setAddress("");
     setOrderItems([]);
   };
@@ -197,17 +214,6 @@ const OrderForm = () => {
                 value={contact}
                 onChange={(e) => setContact(e.target.value)}
                 placeholder="Phone number"
-              />
-            </div>
-            <div>
-              <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-1.5 block">
-                Email
-              </label>
-              <Input
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="your@email.com"
               />
             </div>
             <div>
