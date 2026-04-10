@@ -21,6 +21,10 @@ Required variables:
 Optional:
 
 - `VITE_FIREBASE_MEASUREMENT_ID`
+- `VITE_PAYMENT_UPI_ID` (UPI ID shown in payment instructions)
+- `VITE_CLOUDINARY_CLOUD_NAME` (Cloudinary cloud name)
+- `VITE_CLOUDINARY_UPLOAD_PRESET` (unsigned upload preset)
+- `VITE_CLOUDINARY_FOLDER` (optional Cloudinary folder path)
 
 ## Development
 
@@ -34,6 +38,29 @@ npm run dev
 ```bash
 npm run build
 ```
+
+## Firestore Rules Setup
+
+Payment submission writes update existing order documents. If Firestore rules do not allow owner updates for payment fields, you will get permission-denied errors.
+
+Use the rules from [firestore.rules](firestore.rules).
+
+What these rules allow:
+
+- Authenticated users can create their own orders.
+- Users can read only their own orders.
+- Users can update only payment fields on their own order:
+	- status to payment_submitted
+	- payment
+	- paymentSubmittedAt
+- Admin email can read all orders and mark orders completed.
+
+Deploy via Firebase CLI:
+
+1. Install Firebase CLI: npm install -g firebase-tools
+2. Login: firebase login
+3. Select project: firebase use xenlabs-a3f42
+4. Deploy rules file: firebase deploy --only firestore:rules
 
 ## Deployment Notes
 

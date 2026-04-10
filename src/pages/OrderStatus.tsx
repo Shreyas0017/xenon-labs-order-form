@@ -43,16 +43,11 @@ const parseOrderItems = (value: unknown): OrderRecord["items"] => {
 
   return value.map((item) => {
     const data = (item ?? {}) as Record<string, unknown>;
-    const selectionType = typeof data.selectionType === "string" ? data.selectionType : "preset";
-    const customQty = typeof data.customQty === "number" ? data.customQty : null;
     const presetKey = typeof data.presetKey === "string" ? data.presetKey : "";
 
     return {
       productName: typeof data.productName === "string" ? data.productName : "Unknown Product",
-      quantityLabel:
-        selectionType === "custom"
-          ? `${customQty ?? 0} pcs`
-          : presetKey || "Preset quantity",
+      quantityLabel: presetKey || "Preset quantity",
       total: typeof data.total === "number" ? data.total : Number(data.total ?? 0),
     };
   });
@@ -178,9 +173,19 @@ const OrderStatus = () => {
                         {order.createdAt ? order.createdAt.toLocaleString() : "Pending timestamp"}
                       </p>
                     </div>
-                    <div className="text-right">
+                    <div className="text-right space-y-2">
                       <p className="text-sm uppercase tracking-wider text-primary">{order.status}</p>
                       <p className="font-display text-secondary-foreground">Rs {order.total}</p>
+                      {order.status !== "completed" && (
+                        <Button
+                          type="button"
+                          variant="outline"
+                          className="h-8 px-3 text-xs"
+                          onClick={() => navigate(`/payment/${order.id}`)}
+                        >
+                          Pay / Update Payment
+                        </Button>
+                      )}
                     </div>
                   </div>
 

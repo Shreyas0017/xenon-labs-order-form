@@ -1,4 +1,5 @@
 import { useState, useMemo, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import {
@@ -10,29 +11,21 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { products, calculateCustomPrice, type Product } from "@/lib/products";
+import { products, type Product } from "@/lib/products";
 import { toast } from "sonner";
 import { collection, doc, serverTimestamp, setDoc } from "firebase/firestore/lite";
 import { db, getSignedInUser } from "@/lib/firebase";
 
-const PAYMENT_FORM_URL = "https://forms.gle/iBrYH3EjpKVn5Xx68";
-
 interface OrderItem {
   product: Product;
-  selectionType: "preset" | "custom";
+  selectionType: "preset";
   presetKey?: string;
-  customQty?: number;
   total: number;
 }
 
 interface OrderFormProps {
-  onOrderPlaced?: () => void;
+  onOrderPlaced?: (orderId?: string) => void;
   defaultName?: string;
-}
-
-interface PlacedOrderInfo {
-  orderId: string;
-  orderNumber: string;
 }
 
 const createOrderNumber = (id: string): string => {
@@ -40,16 +33,13 @@ const createOrderNumber = (id: string): string => {
 };
 
 const OrderForm = ({ onOrderPlaced, defaultName = "" }: OrderFormProps) => {
+  const navigate = useNavigate();
   const [name, setName] = useState("");
   const [contact, setContact] = useState("");
-  const [address, setAddress] = useState("");
   const [orderItems, setOrderItems] = useState<OrderItem[]>([]);
-  const [selectedProduct, setSelectedProduct] = useState("");
-  const [selectedTier, setSelectedTier] = useState("");
-  const [customQty, setCustomQty] = useState("");
-  const [isCustom, setIsCustom] = useState(false);
+  const marketplaceProducts = useMemo(() => products, []);
+  const [selectedTierByProduct, setSelectedTierByProduct] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
-  const [placedOrder, setPlacedOrder] = useState<PlacedOrderInfo | null>(null);
 
   useEffect(() => {
     if (!name && defaultName) {
@@ -57,66 +47,42 @@ const OrderForm = ({ onOrderPlaced, defaultName = "" }: OrderFormProps) => {
     }
   }, [defaultName, name]);
 
-  const currentProduct = useMemo(
-    () => products.find((p) => p.id === selectedProduct),
-    [selectedProduct]
-  );
+  useEffect(() => {
+    setSelectedTierByProduct((prev) => {
+      if (Object.keys(prev).length > 0) {
+        return prev;
+      }
 
-  const currentItemTotal = useMemo(() => {
-    if (!currentProduct) return 0;
-    if (isCustom && customQty) {
-      return calculateCustomPrice(currentProduct, parseInt(customQty));
-    }
-    if (!isCustom && selectedTier) {
-      const tier = currentProduct.tiers.find(
-        (t) => `${t.quantity}` === selectedTier
-      );
-      return tier?.price ?? 0;
-    }
-    return 0;
-  }, [currentProduct, isCustom, customQty, selectedTier]);
+      return marketplaceProducts.reduce<Record<string, string>>((acc, product) => {
+        acc[product.id] = `${product.tiers[0]?.quantity ?? ""}`;
+        return acc;
+      }, {});
+    });
+  }, [marketplaceProducts]);
 
   const grandTotal = useMemo(
     () => orderItems.reduce((sum, item) => sum + item.total, 0),
     [orderItems]
   );
 
-  const addItem = () => {
-    if (!currentProduct) return;
-    let item: OrderItem;
-    if (isCustom) {
-      const qty = parseInt(customQty);
-      if (!qty || qty <= 0) {
-        toast.error("Enter a valid quantity");
-        return;
-      }
-      item = {
-        product: currentProduct,
-        selectionType: "custom",
-        customQty: qty,
-        total: calculateCustomPrice(currentProduct, qty),
-      };
-    } else {
-      const tier = currentProduct.tiers.find(
-        (t) => `${t.quantity}` === selectedTier
-      );
-      if (!tier) {
-        toast.error("Select a quantity");
-        return;
-      }
-      item = {
-        product: currentProduct,
-        selectionType: "preset",
-        presetKey: `${tier.quantity} pcs`,
-        total: tier.price,
-      };
+  const addMarketplaceItem = (product: Product) => {
+    const selectedTierValue = selectedTierByProduct[product.id];
+    const tier = product.tiers.find((currentTier) => `${currentTier.quantity}` === selectedTierValue);
+
+    if (!tier) {
+      toast.error("Select a quantity before adding");
+      return;
     }
+
+    const item: OrderItem = {
+      product,
+      selectionType: "preset",
+      presetKey: `${tier.quantity} pcs`,
+      total: tier.price,
+    };
+
     setOrderItems((prev) => [...prev, item]);
-    setSelectedProduct("");
-    setSelectedTier("");
-    setCustomQty("");
-    setIsCustom(false);
-    toast.success(`${item.product.name} added`);
+    toast.success(`${product.name} added to cart`);
   };
 
   const removeItem = (index: number) => {
@@ -124,7 +90,7 @@ const OrderForm = ({ onOrderPlaced, defaultName = "" }: OrderFormProps) => {
   };
 
   const handleSubmit = async () => {
-    if (!name || !contact || !address) {
+    if (!name || !contact) {
       toast.error("Please fill all fields");
       return;
     }
@@ -152,7 +118,6 @@ const OrderForm = ({ onOrderPlaced, defaultName = "" }: OrderFormProps) => {
           name,
           contact,
           email,
-          address,
         },
         status: "placed",
         items: orderItems.map((item) => ({
@@ -160,20 +125,16 @@ const OrderForm = ({ onOrderPlaced, defaultName = "" }: OrderFormProps) => {
           productName: item.product.name,
           selectionType: item.selectionType,
           presetKey: item.presetKey ?? null,
-          customQty: item.customQty ?? null,
           total: item.total,
         })),
         total: grandTotal,
         createdAt: serverTimestamp(),
       });
 
-      setPlacedOrder({
-        orderId: orderRef.id,
-        orderNumber,
-      });
       toast.success("Pre-order placed successfully!");
       resetForm();
-      onOrderPlaced?.();
+      onOrderPlaced?.(orderRef.id);
+      navigate(`/payment/${orderRef.id}`);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Unknown error";
       const lowerMessage = message.toLowerCase();
@@ -195,263 +156,135 @@ const OrderForm = ({ onOrderPlaced, defaultName = "" }: OrderFormProps) => {
   const resetForm = () => {
     setName(defaultName || "");
     setContact("");
-    setAddress("");
     setOrderItems([]);
   };
 
-  const handleCopyOrderId = async () => {
-    if (!placedOrder?.orderId) return;
-
-    try {
-      await navigator.clipboard.writeText(placedOrder.orderId);
-      toast.success("Order ID copied");
-    } catch {
-      toast.error("Unable to copy order ID");
-    }
-  };
-
   return (
-    <div className="min-h-screen bg-background flex items-center justify-center p-4">
-      <div className="w-full max-w-lg">
-        {/* Header */}
-        <div className="text-center mb-8">
-          <h1 className="font-display text-3xl md:text-4xl font-bold text-primary tracking-wider mb-2">
-            XENON LABS
-          </h1>
-          <div className="h-px w-32 mx-auto bg-gradient-to-r from-transparent via-primary to-transparent" />
-          <p className="text-muted-foreground mt-3 text-sm tracking-wide uppercase">
-            Pre-Order Form
-          </p>
+    <div className="min-h-screen bg-[radial-gradient(circle_at_top,_hsl(var(--primary)/0.08),_transparent_45%),linear-gradient(150deg,_hsl(var(--background))_0%,_hsl(var(--secondary)/0.25)_100%)] p-4 md:p-8">
+      <div className="mx-auto w-full max-w-6xl space-y-6">
+        <div className="rounded-2xl border border-border bg-card/80 px-5 py-6 backdrop-blur-sm md:px-8">
+          <h1 className="font-display text-3xl font-bold tracking-wider text-primary md:text-4xl">Xenon Labs Marketplace</h1>
+          <p className="mt-2 text-sm text-muted-foreground">Add products with the + button, review cart totals, then submit and continue to payment form.</p>
         </div>
 
-        {/* Form Card */}
-        <div className="bg-card border border-border rounded-lg p-6 space-y-5 shadow-glow">
-          {/* Personal Info */}
-          <div className="space-y-4">
-            <div>
-              <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-1.5 block">
-                Name
-              </label>
-              <Input
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="Your full name"
-              />
+        <div className="grid gap-6 xl:grid-cols-[2fr_1fr]">
+          <div className="space-y-6">
+            <div className="rounded-2xl border border-border bg-card p-5 md:p-6">
+              <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Customer details</p>
+              <div className="mt-4 grid gap-3 md:grid-cols-2">
+                <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Your name" />
+                <Input value={contact} onChange={(e) => setContact(e.target.value)} placeholder="Phone number" />
+              </div>
             </div>
-            <div>
-              <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-1.5 block">
-                Contact
-              </label>
-              <Input
-                value={contact}
-                onChange={(e) => setContact(e.target.value)}
-                placeholder="Phone number"
-              />
-            </div>
-            <div>
-              <label className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-1.5 block">
-                Address
-              </label>
-              <Input
-                value={address}
-                onChange={(e) => setAddress(e.target.value)}
-                placeholder="Delivery address"
-              />
-            </div>
-          </div>
 
-          {/* Divider */}
-          <div className="h-px bg-border" />
+            <div className="rounded-2xl border border-border bg-card p-5 md:p-6">
+              <div className="flex items-center justify-between">
+                <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">All products</p>
+                <span className="rounded-full bg-secondary px-3 py-1 text-xs text-secondary-foreground">{marketplaceProducts.length} options</span>
+              </div>
 
-          {/* Product Selection */}
-          <div className="space-y-4">
-            <h2 className="font-display text-sm font-semibold text-primary tracking-wider uppercase">
-              Product Selection
-            </h2>
+              <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                {marketplaceProducts.map((product) => {
+                  const selectedTierValue = selectedTierByProduct[product.id] ?? "";
+                  const selectedTierPrice = product.tiers.find((tier) => `${tier.quantity}` === selectedTierValue)?.price ?? product.tiers[0]?.price ?? 0;
 
-            <Select
-              value={selectedProduct}
-              onValueChange={(val) => {
-                setSelectedProduct(val);
-                setSelectedTier("");
-                setCustomQty("");
-                setIsCustom(false);
-              }}
-            >
-              <SelectTrigger>
-                <SelectValue placeholder="Select product" />
-              </SelectTrigger>
-              <SelectContent>
-                {products.map((p) => (
-                  <SelectItem key={p.id} value={p.id}>
-                    {p.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-
-            {currentProduct && (
-              <div className="space-y-3">
-                {/* Preset tiers */}
-                <Select
-                  value={isCustom ? "custom" : selectedTier}
-                  onValueChange={(val) => {
-                    if (val === "custom") {
-                      setIsCustom(true);
-                      setSelectedTier("");
-                    } else {
-                      setIsCustom(false);
-                      setSelectedTier(val);
-                      setCustomQty("");
-                    }
-                  }}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select quantity" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectGroup>
-                      <SelectLabel>{currentProduct.name} Pricing</SelectLabel>
-                      {currentProduct.tiers.map((tier) => (
-                        <SelectItem
-                          key={tier.quantity}
-                          value={`${tier.quantity}`}
+                  return (
+                    <div key={product.id} className="group rounded-xl border border-border bg-secondary/35 p-4 transition-colors hover:border-primary/60">
+                      <div className="flex items-start justify-between gap-3">
+                        <div>
+                          <h3 className="font-display text-lg font-bold text-foreground">{product.name}</h3>
+                          <p className="mt-1 text-xs text-muted-foreground">Starting at Rs {product.tiers[0]?.price ?? 0}</p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => addMarketplaceItem(product)}
+                          className="flex h-9 w-9 items-center justify-center rounded-full border border-primary/40 bg-primary/10 text-lg font-semibold text-primary transition-colors hover:bg-primary hover:text-primary-foreground"
+                          aria-label={`Add ${product.name}`}
                         >
-                          {tier.quantity} piece{tier.quantity > 1 ? "s" : ""} — ₹
-                          {tier.price}
-                        </SelectItem>
-                      ))}
-                      <SelectItem value="custom">Custom quantity</SelectItem>
-                    </SelectGroup>
-                  </SelectContent>
-                </Select>
+                          +
+                        </button>
+                      </div>
 
-                {isCustom && (
-                  <Input
-                    type="number"
-                    min="1"
-                    value={customQty}
-                    onChange={(e) => setCustomQty(e.target.value)}
-                    placeholder="Enter quantity"
-                  />
-                )}
+                      <div className="mt-3">
+                        <Select
+                          value={selectedTierValue}
+                          onValueChange={(value) => {
+                            setSelectedTierByProduct((prev) => ({ ...prev, [product.id]: value }));
+                          }}
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="Select quantity" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectGroup>
+                              <SelectLabel>{product.name} pricing</SelectLabel>
+                              {product.tiers.map((tier) => (
+                                <SelectItem key={`${product.id}-${tier.quantity}`} value={`${tier.quantity}`}>
+                                  {tier.quantity} pcs - Rs {tier.price}
+                                </SelectItem>
+                              ))}
+                            </SelectGroup>
+                          </SelectContent>
+                        </Select>
+                      </div>
 
-                {currentItemTotal > 0 && (
-                  <div className="flex items-center justify-between bg-secondary rounded-md px-4 py-2">
-                    <span className="text-sm text-secondary-foreground">
-                      Item Total
-                    </span>
-                    <span className="font-display font-bold text-primary">
-                      ₹{currentItemTotal}
-                    </span>
-                  </div>
-                )}
-
-                <Button
-                  onClick={addItem}
-                  className="w-full"
-                  variant="outline"
-                >
-                  + Add to Order
-                </Button>
-              </div>
-            )}
-          </div>
-
-          {/* Order Items */}
-          {orderItems.length > 0 && (
-            <>
-              <div className="h-px bg-border" />
-              <div className="space-y-2">
-                <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                  Order Summary
-                </h3>
-                {orderItems.map((item, i) => (
-                  <div
-                    key={i}
-                    className="flex items-center justify-between bg-secondary rounded-md px-3 py-2 text-sm"
-                  >
-                    <div className="text-secondary-foreground">
-                      <span className="font-medium">{item.product.name}</span>
-                      <span className="text-muted-foreground ml-2">
-                        {item.selectionType === "custom"
-                          ? `${item.customQty} pcs`
-                          : item.presetKey}
-                      </span>
+                      <p className="mt-3 text-sm font-semibold text-primary">Selected price: Rs {selectedTierPrice}</p>
                     </div>
-                    <div className="flex items-center gap-3">
-                      <span className="font-display text-primary font-semibold">
-                        ₹{item.total}
-                      </span>
-                      <button
-                        onClick={() => removeItem(i)}
-                        className="text-muted-foreground hover:text-destructive transition-colors text-xs"
-                      >
-                        ✕
-                      </button>
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
-            </>
-          )}
-
-          {/* Total */}
-          <div className="h-px bg-border" />
-          <div className="flex items-center justify-between px-1">
-            <span className="font-display text-sm font-semibold text-foreground uppercase tracking-wider">
-              Total
-            </span>
-            <span className="font-display text-2xl font-bold text-primary">
-              ₹{grandTotal}
-            </span>
-          </div>
-
-          {/* Submit */}
-          <Button
-            onClick={handleSubmit}
-            disabled={submitting}
-            className="w-full h-12 font-display text-sm tracking-widest uppercase animate-pulse-glow"
-          >
-            {submitting ? "Submitting..." : "⚡ Pre-Order Now"}
-          </Button>
-
-          {placedOrder && (
-            <div className="rounded-md border border-primary/40 bg-secondary p-4 space-y-3">
-              <p className="text-xs uppercase tracking-widest text-primary">Payment Process</p>
-              <p className="text-sm text-secondary-foreground">
-                Order Number: <span className="font-semibold">{placedOrder.orderNumber}</span>
-              </p>
-              <div className="flex items-center justify-between gap-2">
-                <p className="text-xs text-muted-foreground break-all">
-                  Order ID: {placedOrder.orderId}
-                </p>
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="h-8 px-3 text-xs"
-                  onClick={handleCopyOrderId}
-                >
-                  Copy Order ID
-                </Button>
-              </div>
-              <a
-                href={PAYMENT_FORM_URL}
-                target="_blank"
-                rel="noreferrer"
-                className="inline-block w-full"
-              >
-                <Button type="button" className="w-full">
-                  Continue To Payment Form
-                </Button>
-              </a>
             </div>
-          )}
+          </div>
+
+          <div className="space-y-4">
+            <div className="sticky top-4 rounded-2xl border border-border bg-card p-5 md:p-6">
+              <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Cart review</p>
+
+              <div className="mt-4 space-y-2">
+                {orderItems.length === 0 ? (
+                  <p className="rounded-md border border-dashed border-border p-4 text-sm text-muted-foreground">Your cart is empty. Tap + on any card to add items.</p>
+                ) : (
+                  orderItems.map((item, i) => (
+                    <div key={`${item.product.id}-${i}`} className="flex items-center justify-between rounded-md bg-secondary px-3 py-2 text-sm">
+                      <div>
+                        <p className="font-medium text-secondary-foreground">{item.product.name}</p>
+                        <p className="text-xs text-muted-foreground">{item.presetKey}</p>
+                      </div>
+                      <div className="flex items-center gap-3">
+                        <span className="font-display font-semibold text-primary">Rs {item.total}</span>
+                        <button
+                          type="button"
+                          onClick={() => removeItem(i)}
+                          className="text-xs text-muted-foreground transition-colors hover:text-destructive"
+                          aria-label="Remove item"
+                        >
+                          x
+                        </button>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+
+              <div className="mt-5 border-t border-border pt-4">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm uppercase tracking-wider text-muted-foreground">Total</span>
+                  <span className="font-display text-3xl font-bold text-primary">Rs {grandTotal}</span>
+                </div>
+              </div>
+
+              <Button
+                onClick={handleSubmit}
+                disabled={submitting}
+                className="mt-5 h-12 w-full font-display text-sm uppercase tracking-wider"
+              >
+                {submitting ? "Submitting..." : "Place Order"}
+              </Button>
+            </div>
+          </div>
         </div>
 
-        <p className="text-center text-xs text-muted-foreground mt-6">
-          © {new Date().getFullYear()} Xenon Labs. All rights reserved.
-        </p>
+        <p className="text-center text-xs text-muted-foreground">© {new Date().getFullYear()} Xenon Labs. All rights reserved.</p>
       </div>
     </div>
   );

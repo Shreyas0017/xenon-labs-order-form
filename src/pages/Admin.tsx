@@ -21,10 +21,13 @@ type AdminOrder = {
   customerName: string;
   customerContact: string;
   customerEmail: string;
-  customerAddress: string;
   total: number;
   status: string;
   createdAt?: Date;
+  paymentTransactionId: string;
+  paymentScreenshotUrl: string;
+  paymentSubmittedAt?: Date;
+  paymentUpiId: string;
   items: {
     productName: string;
     quantityLabel: string;
@@ -50,16 +53,11 @@ const parseOrderItems = (value: unknown): AdminOrder["items"] => {
 
   return value.map((item) => {
     const data = (item ?? {}) as Record<string, unknown>;
-    const selectionType = typeof data.selectionType === "string" ? data.selectionType : "preset";
-    const customQty = typeof data.customQty === "number" ? data.customQty : null;
     const presetKey = typeof data.presetKey === "string" ? data.presetKey : "";
 
     return {
       productName: typeof data.productName === "string" ? data.productName : "Unknown Product",
-      quantityLabel:
-        selectionType === "custom"
-          ? `${customQty ?? 0} pcs`
-          : presetKey || "Preset quantity",
+      quantityLabel: presetKey || "Preset quantity",
       total: typeof data.total === "number" ? data.total : Number(data.total ?? 0),
     };
   });
@@ -72,10 +70,13 @@ const toCsv = (orders: AdminOrder[]): string => {
     "name",
     "contact",
     "email",
-    "address",
     "items",
     "status",
     "total",
+    "paymentTransactionId",
+    "paymentScreenshotUrl",
+    "paymentUpiId",
+    "paymentSubmittedAt",
     "createdAt",
   ];
 
@@ -90,10 +91,13 @@ const toCsv = (orders: AdminOrder[]): string => {
     escape(order.customerName),
     escape(order.customerContact),
     escape(order.customerEmail),
-    escape(order.customerAddress),
     escape(order.items.map((item) => `${item.productName} (${item.quantityLabel})`).join(" | ")),
     escape(order.status),
     escape(order.total),
+    escape(order.paymentTransactionId),
+    escape(order.paymentScreenshotUrl),
+    escape(order.paymentUpiId),
+    escape(order.paymentSubmittedAt ? order.paymentSubmittedAt.toISOString() : ""),
     escape(order.createdAt ? order.createdAt.toISOString() : ""),
   ]);
 
@@ -151,6 +155,7 @@ const Admin = () => {
         const mapped = snapshot.docs.map((doc, index) => {
           const data = doc.data() as DocumentData;
           const customer = (data.customer ?? {}) as Record<string, unknown>;
+          const payment = (data.payment ?? {}) as Record<string, unknown>;
 
           return {
             id: doc.id,
@@ -161,10 +166,13 @@ const Admin = () => {
             customerName: typeof customer.name === "string" ? customer.name : "",
             customerContact: typeof customer.contact === "string" ? customer.contact : "",
             customerEmail: typeof customer.email === "string" ? customer.email : "",
-            customerAddress: typeof customer.address === "string" ? customer.address : "",
             total: typeof data.total === "number" ? data.total : Number(data.total ?? 0),
             status: typeof data.status === "string" ? data.status : "placed",
             createdAt: asDate(data.createdAt),
+            paymentTransactionId: typeof payment.transactionId === "string" ? payment.transactionId : "",
+            paymentScreenshotUrl: typeof payment.screenshotUrl === "string" ? payment.screenshotUrl : "",
+            paymentUpiId: typeof payment.upiId === "string" ? payment.upiId : "",
+            paymentSubmittedAt: asDate(payment.submittedAt),
             items: parseOrderItems(data.items),
           } as AdminOrder;
         });
@@ -251,7 +259,7 @@ const Admin = () => {
             <div className="space-y-2">
               {orders.map((order) => (
                 <div key={order.id} className="bg-secondary rounded-md px-4 py-3 space-y-3">
-                  <div className="grid grid-cols-1 md:grid-cols-5 gap-2">
+                  <div className="grid grid-cols-1 md:grid-cols-6 gap-2">
                     <div>
                       <p className="text-xs text-muted-foreground">Order</p>
                       <p className="text-sm font-medium text-secondary-foreground">{order.orderNumber}</p>
@@ -268,6 +276,12 @@ const Admin = () => {
                     <div>
                       <p className="text-xs text-muted-foreground">Status</p>
                       <p className="text-sm uppercase tracking-wider text-primary">{order.status}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground">Payment</p>
+                      <p className="text-sm text-secondary-foreground">
+                        {order.paymentTransactionId || "Pending"}
+                      </p>
                     </div>
                     <div className="md:text-right">
                       <p className="text-xs text-muted-foreground">Total</p>
@@ -325,6 +339,38 @@ const Admin = () => {
                           ))}
                         </div>
                       )}
+
+                      <div className="pt-2 border-t border-border space-y-2">
+                        <p className="text-xs uppercase tracking-wider text-muted-foreground">Payment Details</p>
+                        <p className="text-sm text-secondary-foreground">
+                          UPI ID: <span className="font-medium">{order.paymentUpiId || "Not submitted"}</span>
+                        </p>
+                        <p className="text-sm text-secondary-foreground">
+                          Transaction ID: <span className="font-medium">{order.paymentTransactionId || "Not submitted"}</span>
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          Submitted: {order.paymentSubmittedAt ? order.paymentSubmittedAt.toLocaleString() : "Not submitted"}
+                        </p>
+                        {order.paymentScreenshotUrl ? (
+                          <div className="space-y-2">
+                            <a
+                              href={order.paymentScreenshotUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="text-xs text-primary underline"
+                            >
+                              Open payment screenshot
+                            </a>
+                            <img
+                              src={order.paymentScreenshotUrl}
+                              alt={`Payment screenshot ${order.orderNumber}`}
+                              className="w-full max-w-sm rounded-md border border-border"
+                            />
+                          </div>
+                        ) : (
+                          <p className="text-sm text-muted-foreground">Payment screenshot not submitted.</p>
+                        )}
+                      </div>
                     </div>
                   )}
                 </div>
